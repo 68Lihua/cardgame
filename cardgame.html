@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>牌力对对碰 - 链上博弈</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style type="text/tailwindcss">
+        @layer utilities {
+            body { font-family: 'JetBrains Mono', monospace; }
+            /* 按钮霓虹效果 */
+            .slot-machine-btn {
+                @apply relative px-8 py-3 font-bold rounded-xl shadow-[0_4px_0_0_rgba(0,0,0,0.2)] transform transition-all duration-200 active:translate-y-1 active:shadow-none disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none;
+            }
+            /* 真实扑克样式 */
+            .card {
+                @apply w-28 h-40 md:w-32 md:h-48 bg-white rounded-xl shadow-2xl flex flex-col items-center justify-between p-4 text-3xl font-bold border-2 border-gray-200 relative overflow-hidden;
+                transition: transform 0.6s cubic-bezier(0.23, 1, 0.32, 1), opacity 0.5s;
+            }
+            .card-hidden {
+                @apply border-gray-700;
+                background: repeating-linear-gradient(45deg, #1f2937, #1f2937 10px, #374151 10px, #374151 20px);
+            }
+            .card-red { @apply text-red-600; }
+            .card-black { @apply text-gray-900; }
+            
+            /* 余额面板 */
+            .glass-panel {
+                @apply bg-white/80 backdrop-blur-md border border-white/20 shadow-xl;
+            }
+            
+            /* 动画 */
+            .draw-animation { animation: cardDraw 0.5s ease-out; }
+            @keyframes cardDraw {
+                0% { transform: translateY(-100px) rotate(10deg); opacity: 0; }
+                100% { transform: translateY(0) rotate(0); opacity: 1; }
+            }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 bg-[radial-gradient(circle_at_50%_50%,#1e293b_0%,#0f172a_100%)] min-h-screen flex flex-col items-center py-8 px-4 text-slate-100">
+
+    <header class="w-full max-w-5xl flex flex-col md:flex-row justify-between items-center mb-10 gap-6">
+        <div>
+            <h1 class="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-yellow-600 tracking-tighter italic">
+                LUCKY POKER
+            </h1>
+            <p class="text-slate-400 text-sm mt-1 tracking-widest uppercase">Decentralized Casino Experience</p>
+        </div>
+        
+        <div class="flex items-center gap-4">
+            <div class="flex gap-3 text-sm">
+                <div class="bg-slate-800/50 p-2 px-4 rounded-lg border border-slate-700">
+                    <span class="block text-slate-500 text-[10px] uppercase">Your Balance</span>
+                    <span id="userBalance" class="text-green-400 font-bold">0.00 ETH</span>
+                </div>
+                <div class="bg-slate-800/50 p-2 px-4 rounded-lg border border-slate-700">
+                    <span class="block text-slate-500 text-[10px] uppercase">Contract Pool</span>
+                    <span id="contractBalance" class="text-amber-400 font-bold">-- ETH</span>
+                </div>
+            </div>
+            <button id="connectWallet" class="slot-machine-btn bg-gradient-to-b from-blue-500 to-blue-700 text-white text-sm">
+                CONNECT WALLET
+            </button>
+        </div>
+    </header>
+
+    <main class="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div class="lg:col-span-4 space-y-6">
+            <div class="glass-panel rounded-3xl p-6 text-slate-800">
+                <h2 class="text-xl font-black mb-4 flex items-center gap-2">
+                    <span class="w-2 h-6 bg-amber-500 rounded-full"></span>
+                    SET YOUR BET
+                </h2>
+                <div class="space-y-6">
+                    <input type="range" id="betAmount" min="0.1" max="2" step="0.1" value="0.1"
+                        class="w-full h-3 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-600">
+                    <div class="flex justify-between items-end">
+                        <span class="text-slate-400 text-xs font-bold uppercase">Amount</span>
+                        <div class="text-4xl font-black text-amber-600">
+                            <span id="betValue">0.1</span><span class="text-lg ml-1">ETH</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-slate-800/40 border border-slate-700 rounded-3xl p-6">
+                <h3 class="text-slate-300 font-bold mb-3 text-sm uppercase tracking-widest">Game Rules</h3>
+                <ul class="text-slate-400 text-xs space-y-3 leading-relaxed">
+                    <li class="flex gap-2"><span>•</span> 设置赌注并支付费用后开始游戏。</li>
+                    <li class="flex gap-2"><span>•</span> 玩家大赢双倍赌注，平局资金返还。</li>
+                    <li class="flex gap-2"><span>•</span> 弃牌(Fold)仅返还 50% 的赌注。</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="lg:col-span-8 flex flex-col gap-6">
+            <div class="bg-emerald-900/30 border-4 border-slate-800 rounded-[40px] p-8 min-h-[500px] flex flex-col justify-between relative overflow-hidden">
+                <div class="absolute inset-0 opacity-10 pointer-events-none flex items-center justify-center">
+                    <div class="w-[500px] h-[500px] border-[20px] border-white rounded-full"></div>
+                </div>
+
+                <div class="flex flex-col items-center">
+                    <div class="text-xs font-bold text-emerald-500 mb-4 bg-emerald-500/10 px-4 py-1 rounded-full border border-emerald-500/20 uppercase tracking-[0.3em]">AI Dealer</div>
+                    <div id="aiCards" class="flex gap-4 min-h-[160px] md:min-h-[192px]">
+                        <div class="card card-hidden"></div>
+                    </div>
+                    <div id="aiTotal" class="mt-2 text-slate-400 font-bold">Total: ?</div>
+                </div>
+
+                <div id="resultArea" class="py-4 text-center z-10">
+                    <p id="resultText" class="text-2xl font-black text-white uppercase tracking-tighter drop-shadow-lg">Ready to Play?</p>
+                </div>
+
+                <div class="flex flex-col items-center">
+                    <div id="playerTotal" class="mb-2 text-slate-400 font-bold">Total: -</div>
+                    <div id="playerCards" class="flex gap-4 min-h-[160px] md:min-h-[192px]">
+                        <div class="card card-hidden"></div>
+                    </div>
+                    <div class="mt-4 text-xs font-bold text-blue-400 bg-blue-500/10 px-4 py-1 rounded-full border border-blue-500/20 uppercase tracking-[0.3em]">You (Player)</div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <button id="startGame" class="slot-machine-btn bg-gradient-to-b from-amber-400 to-amber-600 text-white text-lg col-span-2 md:col-span-1">Deal</button>
+                <button id="addCard" class="slot-machine-btn bg-slate-100 text-slate-800 text-lg disabled:text-slate-400" disabled>Hit</button>
+                <button id="openCard" class="slot-machine-btn bg-blue-600 text-white text-lg" disabled>Stand</button>
+                <button id="abandonCard" class="slot-machine-btn bg-red-600 text-white text-lg" disabled>Fold</button>
+            </div>
+        </div>
+    </main>
+
+    <footer class="mt-auto pt-12 text-slate-600 text-[10px] tracking-widest uppercase">
+        Secure & Fair Blockchain Gaming © 2026
+    </footer>
+
+    <script type="module">
+        import { ethers } from "https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.5/ethers.min.js";
+        // 游戏状态枚举
+        const GameState = {
+            READY: 'ready',
+            DEALING: 'dealing',
+            DEALED: 'dealed',
+            SETTLED: 'settled'
+        };
+
+        // 全局状态管理
+        let globalState = {
+            provider: null,
+            signer: null,
+            contract: null,
+            gameState: GameState.READY,
+            betAmount: 1.0,
+            playerCards: [],
+            aiCards: [],
+            addCardCount: 0,
+            aiWinStreak: 0
+        };
+
+        // 合约ABI
+        const CONTRACT_ABI = [
+            "function startGame() external payable",
+            "function hitCard() external",
+            "function judgeResult() external returns (string result, tuple(uint8 rank, uint8 suit, bool isDrawn)[] aiCards)",
+            "function abandon() external",
+            "function getPlayerCards() external view returns (tuple(uint8 rank, uint8 suit, bool isDrawn)[])",
+            "function getAiCards(address _player) external view returns (tuple(uint8 rank, uint8 suit, bool isDrawn)[])", // <--- 必须有这一行
+            "function resetGame() external",
+            "function getContractBalance() external view returns (uint256)",
+            "event GameSettled(address indexed player, string result, uint256 reward)"
+        ];
+        // 合约地址
+        const CONTRACT_ADDRESS = "0xe5d0728dc0Bcfe3C1005a9DDb3fcf93599cFD2Df";
+
+        // DOM元素
+        const elements = {
+            connectWallet: document.getElementById('connectWallet'),
+            betAmount: document.getElementById('betAmount'),
+            betValue: document.getElementById('betValue'),
+            startGame: document.getElementById('startGame'),
+            addCard: document.getElementById('addCard'),
+            openCard: document.getElementById('openCard'),
+            abandonCard: document.getElementById('abandonCard'),
+            playerCards: document.getElementById('playerCards'),
+            aiCards: document.getElementById('aiCards'),
+            playerTotal: document.getElementById('playerTotal'),
+            aiTotal: document.getElementById('aiTotal'),
+            resultText: document.getElementById('resultText')
+        };
+
+        // 初始化
+        window.addEventListener('load', init);
+
+        async function init() {
+            // 绑定事件
+            bindEvents();
+            // 检查钱包连接
+            //await checkWalletConnection();
+        }
+
+        // 绑定事件
+        function bindEvents() {
+            // 钱包连接
+            elements.connectWallet.addEventListener('click', connectWallet);
+            // 赌注滑块
+            elements.betAmount.addEventListener('input', (e) => {
+                globalState.betAmount = parseFloat(e.target.value);
+                elements.betValue.textContent = globalState.betAmount.toFixed(1);
+            });
+            // 游戏操作按钮
+            elements.startGame.addEventListener('click', startGame);
+            elements.addCard.addEventListener('click', addCard);
+            elements.openCard.addEventListener('click', openCard);
+            elements.abandonCard.addEventListener('click', abandonCard);
+        }
+
+        // 检查钱包连接
+       async function checkWalletConnection() {
+            if (window.ethereum) {
+                try {
+                    const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+                    if (accounts.length > 0) {
+                        await setupProvider(accounts[0]);
+                    }
+                } catch (err) {
+                    console.error('检查钱包连接失败:', err);
+                }
+            } else {
+                showResult('请安装MetaMask钱包', 'text-red-500');
+            }
+        } 
+
+        // 连接钱包
+        async function connectWallet() {
+            if (!window.ethereum) {
+                showResult('请安装MetaMask钱包', 'text-red-500');
+                return;
+            }
+            globalState.provider = new ethers.BrowserProvider(window.ethereum);
+
+            try {
+                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                await setupProvider(accounts[0]);
+                await updateUserBalances(accounts[0]);
+                await updateContractBalances();
+                showResult('钱包连接成功', 'text-green-500');
+            } catch (err) {
+                console.error('连接钱包失败:', err);
+                showResult('钱包连接失败，请重试', 'text-red-500');
+            }
+        }
+
+        // 设置Provider和Signer
+        async function setupProvider(account) {
+            if (!globalState.provider) {
+                throw new Error("Provider未初始化，请先完成钱包授权");
+            }
+            globalState.signer = await globalState.provider.getSigner(account);
+            globalState.contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, globalState.signer);
+            elements.connectWallet.textContent = `已连接: ${account.slice(0, 6)}...${account.slice(-4)}`;
+            elements.connectWallet.disabled = true;
+        }
+
+        async function updateUserBalances(userAddress) {
+            try {
+                const provider = globalState.provider;
+
+                // 获取并更新账户余额
+                const userBalanceWei = await provider.getBalance(userAddress);
+                const userBalanceEth = ethers.formatEther(userBalanceWei);
+                document.getElementById('userBalance').innerText = `${parseFloat(userBalanceEth).toFixed(4)} ETH`;
+                
+                console.log("余额已同步");
+            } catch (err) {
+                console.error('更新余额失败:', err);
+            }
+        }
+
+        async function updateContractBalances() {
+            try
+            {
+                const provider = globalState.provider;  
+                // 获取并更新合约余额
+                const contractBalanceWei = await provider.getBalance(CONTRACT_ADDRESS);
+                const contractBalanceEth = ethers.formatEther(contractBalanceWei);
+                document.getElementById('contractBalance').innerText = `${parseFloat(contractBalanceEth).toFixed(2)} ETH`;
+            } catch (err) {
+            console.error('更新余额失败:', err);
+            }
+        }
+
+
+        // 开始游戏
+        async function startGame() {
+            if (!globalState.signer) {
+                showResult('请先连接钱包', 'text-red-500');
+                return;
+            }
+
+            if (globalState.gameState !== GameState.READY) {
+                showResult('请先重置游戏', 'text-red-500');
+                return;
+            }
+
+            try {
+                // 先检查玩家是否已经有未完成的游戏
+                const currentCards = await globalState.contract.getPlayerCards();
+                
+                if (currentCards.length > 0) {
+                    const confirmReset = confirm("检测到您有未完成的游戏，是否重置并重新开始？");
+                    if (confirmReset) {
+                        const resetTx = await globalState.contract.resetGame();
+                        await resetTx.wait();
+                        showResult('游戏重置成功', 'text-green-500');
+                    }
+                }
+                // 更新游戏状态
+                setGameState(GameState.DEALING);
+                showResult('发牌中...', 'text-blue-500');
+
+                // 转换赌注单位（ETH → wei）
+                const betWei = ethers.parseEther(globalState.betAmount.toFixed(1));
+
+                // 调用合约发牌方法（需支付赌注）
+                const tx = await globalState.contract.startGame({ value: betWei });
+                await tx.wait(); // 等待交易确认
+
+                // 获取玩家手牌
+                const playerCards = await globalState.contract.getPlayerCards();
+                globalState.playerCards = formatCards(playerCards);
+                globalState.addCardCount = 0;
+
+                // 渲染玩家手牌
+                renderCards(elements.playerCards, globalState.playerCards);
+                updateTotalPoints();
+
+                // 更新游戏状态
+                setGameState(GameState.DEALED);
+                showResult('请选择操作', 'text-gray-800');
+            } catch (err) {
+                console.error('开始游戏失败:', err);
+                showResult('网络异常，请重试', 'text-red-500');
+                setGameState(GameState.READY);
+            }
+        }
+
+        // 加牌
+        async function addCard() {
+            if (globalState.gameState !== GameState.DEALED) return;
+            if (globalState.addCardCount >= 2) {
+                showResult('最多只能加牌2次', 'text-red-500');
+                return;
+            }
+
+            try {
+                const currentCards = await globalState.contract.getPlayerCards();
+                
+                if (currentCards.length == 0) {
+                    showResult('请先开局再加牌', 'text-red-500');
+                    return;
+                }
+
+                setGameState(GameState.DEALING);
+                showResult('加牌中...', 'text-blue-500');
+
+                // 调用合约发牌方法（无需额外支付赌注）
+                const tx = await globalState.contract.hitCard({});
+                await tx.wait();
+
+                // 获取更新后的玩家手牌
+                const playerCards = await globalState.contract.getPlayerCards();
+                globalState.playerCards = formatCards(playerCards);
+                globalState.addCardCount++;
+
+                // 渲染玩家手牌
+                renderCards(elements.playerCards, globalState.playerCards);
+                updateTotalPoints();
+
+                // 更新游戏状态
+                setGameState(GameState.DEALED);
+                showResult(`已加牌${globalState.addCardCount}次，剩余${2 - globalState.addCardCount}次`, 'text-gray-800');
+
+                // 加牌2次后禁用加牌按钮
+                if (globalState.addCardCount >= 2) {
+                    elements.addCard.disabled = true;
+                }
+            } catch (err) {
+                console.error('加牌失败:', err);
+                showResult('网络异常，请重试', 'text-red-500');
+                setGameState(GameState.DEALED);
+            }
+        }
+
+        // 开牌
+        async function openCard() {
+            if (globalState.gameState !== GameState.DEALED) return;
+
+            try {
+                setGameState(GameState.DEALING);
+                showResult('开牌中，请在钱包确认...', 'text-blue-500');
+
+                // 1. 发起链上交易
+                const tx = await globalState.contract.judgeResult();
+                const receipt = await tx.wait(); // 等待区块确认
+
+                // 2. 从收据中解析 Event 获取胜负
+                const event = receipt.logs
+                    .map((log) => {
+                        try { return globalState.contract.interface.parseLog(log); } catch (e) { return null; }
+                    })
+                    .find((e) => e && e.name === 'GameSettled');
+
+                if (event) {
+                    const result = event.args.result; // 或者 event.args[1]
+
+                    // 3. 调用 View 函数获取 AI 的牌（此时 isActive 已为 false，但数据还在）
+                    // 确保合约中 getAiCards 已经部署
+                    const aiCardsRaw = await globalState.contract.getAiCards(globalState.signer.address);
+                    globalState.aiCards = formatCards(aiCardsRaw);
+
+                    // 4. 更新 UI
+                    renderCards(elements.aiCards, globalState.aiCards, false);
+                    updateTotalPoints();
+                    handleGameResult(result);
+                }
+            } catch (err) {
+                console.error('开牌过程出错:', err);
+                // 如果是 No active game 错误，说明可能已经结算过了
+                if (err.message.includes("No active game")) {
+                    showResult('游戏已结算或未开始，请重试', 'text-red-500');
+                } else {
+                    showResult('网络异常，请检查 ABI 或合约地址', 'text-red-500');
+                }
+                setGameState(GameState.SETTLED);
+            }
+        }
+
+        // 弃牌
+        async function abandonCard() {
+            if (globalState.gameState !== GameState.DEALED) return;
+
+            try {
+                setGameState(GameState.DEALING);
+                showResult('弃牌中，请在钱包确认...', 'text-blue-500');
+
+                // 1. 调用合约弃牌方法（发起交易）
+                const tx = await globalState.contract.abandon();
+                const receipt = await tx.wait(); // 等待交易确认
+                
+                if (!receipt.status) throw new Error("交易执行失败");
+
+                // 2. 弃牌后，直接通过 view 函数获取 AI 的牌面
+                // 注意：这里调用的是我们之前为了修复开牌错误而添加的 getAiCards 函数
+                const aiCardsRaw = await globalState.contract.getAiCards(globalState.signer.address);
+                globalState.aiCards = formatCards(aiCardsRaw);
+
+                // 3. 渲染 AI 手牌
+                renderCards(elements.aiCards, globalState.aiCards, false);
+                updateTotalPoints();
+
+                // 4. 处理弃牌结果 UI
+                globalState.aiWinStreak++;
+                showResult(`你弃牌了，返还一半赌注！AI连胜${globalState.aiWinStreak}局`, 'text-orange-500');
+
+                setGameState(GameState.SETTLED);
+                setTimeout(() => {
+                    showResult(`游戏结束`, 'text-gray-800');
+                }, 3000);
+                setTimeout(() => {
+                    resetGame();
+                    }
+                , 4000);
+
+            } catch (err) {
+                console.error('弃牌失败:', err);
+                showResult('操作失败，请重试', 'text-red-500');
+                setGameState(GameState.DEALED);
+            }
+        }
+
+        // 格式化牌数据（合约返回格式 → 前端显示格式）
+        function formatCards(cards) {
+        const rankNames = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+        const suitNames = ['红桃', '黑桃', '方块', '梅花'];
+
+        return cards.map(card => ({
+            rank: rankNames[Number(card.rank)], //
+            suit: suitNames[Number(card.suit)],
+            value: Number(card.rank) + 1         // 对应合约点数逻辑
+        }));
+    }
+
+        // 渲染牌面
+        function renderCards(container, cards, isPlayer = true) {
+            container.innerHTML = '';
+            cards.forEach((card, index) => {
+                const cardElement = document.createElement('div');
+                cardElement.className = `card ${isPlayer ? '' : 'card-hidden'} animate-slide-in`;
+                cardElement.style.animationDelay = `${index * 0.2}s`;
+                
+                // 玩家牌显示内容，AI牌未开时隐藏
+                if (isPlayer) {
+                    cardElement.innerHTML = `
+                        <span class="text-${getSuitColor(card.suit)}">${card.suit}</span>
+                        <span class="my-2 text-${getSuitColor(card.suit)} text-4xl">${card.rank}</span>
+                        <span class="text-${getSuitColor(card.suit)}">${card.suit}</span>
+                    `;
+                } else {
+                    // AI牌开牌后显示内容
+                    setTimeout(() => {
+                        cardElement.classList.remove('card-hidden');
+                        cardElement.innerHTML = `
+                            <span class="text-${getSuitColor(card.suit)}">${card.suit}</span>
+                            <span class="my-2 text-${getSuitColor(card.suit)} text-4xl">${card.rank}</span>
+                            <span class="text-${getSuitColor(card.suit)}">${card.suit}</span>
+                        `;
+                    }, 500);
+                }
+
+                container.appendChild(cardElement);
+            });
+        }
+
+        // 获取花色颜色
+        function getSuitColor(suit) {
+            return suit === '红桃' || suit === '方块' ? 'red-500' : 'black';
+        }
+
+        // 更新总点数
+        function updateTotalPoints() {
+            // 玩家总点数
+            const playerTotal = globalState.playerCards.reduce((sum, card) => {return sum + Number(card.value);}, 0);
+            elements.playerTotal.textContent = `总点数：${playerTotal}`;
+
+            // AI总点数（未开牌时不显示）
+            if (globalState.aiCards.length > 0) {
+                const aiTotal = globalState.aiCards.reduce((sum, card) => {return sum + Number(card.value);}, 0);
+                elements.aiTotal.textContent = `总点数：${aiTotal}`;
+            }
+        }
+
+        // 处理游戏结果
+        function handleGameResult(result) {
+            switch (result) {
+                case 'win':
+                    globalState.aiWinStreak = 0;
+                    showResult(`你赢了！获得${(globalState.betAmount * 2).toFixed(1)} ETH奖励`, 'text-green-500');
+                    playConfetti(); // 播放烟花动画
+                    break;
+                case 'lose':
+                    globalState.aiWinStreak++;
+                    showResult(`你输了！AI连胜${globalState.aiWinStreak}局`, 'text-red-500');
+                    break;
+                case 'draw':
+                    showResult('平局，重新发牌', 'text-orange-500');
+                    // 自动重置游戏并重新开始
+                    setTimeout(async () => {
+                        await resetGame();
+                        startGame();
+                    }, 2000);
+                    return;
+            }
+
+            setGameState(GameState.SETTLED);
+            // 显示重置提示
+            setTimeout(() => {
+                showResult(`游戏结束`, 'text-gray-800');
+            }, 3000);
+            setTimeout(() => {
+                resetGame();
+                }
+            , 5000);
+        }
+
+        // 重置游戏
+        async function resetGame() {
+            try {
+                const tx = await globalState.contract.resetGame();
+                await tx.wait();
+
+                // 重置全局状态
+                globalState.playerCards = [];
+                globalState.aiCards = [];
+                globalState.addCardCount = 0;
+
+                // 重置UI
+                const hiddenCardHtml = `<div class="card card-hidden"></div>`;
+
+                elements.playerCards.innerHTML = hiddenCardHtml; // 恢复占位背面牌
+                elements.aiCards.innerHTML = hiddenCardHtml;    // 恢复占位背面牌
+
+                elements.playerTotal.textContent = '总点数：-';
+                elements.aiTotal.textContent = '总点数：-';
+
+                // 恢复中间提示文字
+                elements.resultText.className = "text-2xl font-black text-white uppercase tracking-tighter drop-shadow-lg";
+                elements.resultText.textContent = 'Ready to Play?';
+
+                // 如果你之前在连接钱包后更新了余额，建议在这里顺便刷新一下
+                const address = await globalState.signer.getAddress();
+                await updateUserBalances(address);
+                await updateContractBalances();
+
+                setGameState(GameState.READY);
+            } catch (err) {
+                console.error('重置游戏失败:', err);
+                showResult('网络异常，请重试', 'text-red-500');
+            }
+        }
+
+        // 设置游戏状态
+        function setGameState(state) {
+            globalState.gameState = state;
+
+            // 更新按钮状态
+            switch (state) {
+                case GameState.READY:
+                    elements.startGame.disabled = false;
+                    elements.addCard.disabled = true;
+                    elements.openCard.disabled = true;
+                    elements.abandonCard.disabled = true;
+                    break;
+                case GameState.DEALING:
+                    elements.startGame.disabled = true;
+                    elements.addCard.disabled = true;
+                    elements.openCard.disabled = true;
+                    elements.abandonCard.disabled = true;
+                    break;
+                case GameState.DEALED:
+                    elements.startGame.disabled = true;
+                    elements.addCard.disabled = false;
+                    elements.openCard.disabled = false;
+                    elements.abandonCard.disabled = false;
+                    break;
+                case GameState.SETTLED:
+                    elements.startGame.disabled = false;
+                    elements.addCard.disabled = true;
+                    elements.openCard.disabled = true;
+                    elements.abandonCard.disabled = true;
+                    break;
+            }
+        }
+
+        // 显示结果
+        function showResult(text, colorClass = 'text-gray-800') {
+            elements.resultText.textContent = text;
+            elements.resultText.className = `text-3xl font-bold ${colorClass}`;
+        }
+
+        // 播放烟花动画
+        function playConfetti() {
+            confetti({
+                particleCount: 100,
+                spread: 70,
+                origin: { y: 0.6 }
+            });
+        }
+    </script>
+</body>
+</html>
